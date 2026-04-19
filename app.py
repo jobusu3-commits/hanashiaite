@@ -1,6 +1,7 @@
 import os
 import anthropic
 import streamlit as st
+from streamlit_js_eval import streamlit_js_eval
 from character import build_system_prompt
 from storage import save_config, load_config, save_history, load_history, clear_history
 
@@ -20,8 +21,8 @@ if st.session_state.config is None:
     st.caption("5つの質問に答えると、あなただけの話し相手が生まれます。")
 
     with st.form("setup"):
-        user_name = st.text_input("あなたの名前（呼ばれたい名前）", placeholder="さく")
-        name = st.text_input("話し相手の名前", placeholder="ハルカ")
+        user_name = st.text_input("あなたの名前（呼ばれたい名前）", placeholder="例：たかし、ゆい、けん")
+        name = st.text_input("話し相手の名前", placeholder="例：ハル、リク、あやね")
         relationship = st.selectbox("関係性", ["友人", "幼なじみ", "先輩", "後輩", "恋人", "メンター"])
         tone = st.selectbox("口調", ["タメ口・フレンドリー", "丁寧語・落ち着いた", "関西弁", "元気・テンション高め", "クール・寡黙"])
         personality = st.text_area("性格・特徴（自由に）", placeholder="例：聞き上手で穏やか。たまに毒舌だけど根は優しい。", height=80)
@@ -55,7 +56,6 @@ else:
         st.session_state.config = None
         st.session_state.messages = []
         clear_history()
-        import os
         if os.path.exists("character_config.json"):
             os.remove("character_config.json")
         st.rerun()
@@ -65,8 +65,45 @@ else:
         with st.chat_message(msg["role"]):
             st.write(msg["content"])
 
-    # 入力
-    user_input = st.chat_input(f"{name}に話しかける...")
+    # 音声入力状態管理
+    if "listen_mode" not in st.session_state:
+        st.session_state.listen_mode = False
+
+    if st.button("🎤 話す", disabled=st.session_state.listen_mode):
+        st.session_state.listen_mode = True
+        st.rerun()
+
+    # 音声認識実行
+    voice_input = None
+    if st.session_state.listen_mode:
+        st.info("🎤 聞いています…　話し終わったら少し待ってください")
+        voice_input = streamlit_js_eval(js_expressions="""
+            new Promise((resolve) => {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRecognition) { resolve(''); return; }
+                const recognition = new SpeechRecognition();
+                recognition.lang = 'ja-JP';
+                recognition.interimResults = false;
+                recognition.maxAlternatives = 1;
+                recognition.onresult = (e) => resolve(e.results[0][0].transcript);
+                recognition.onerror = () => resolve('');
+                recognition.start();
+            })
+        """, want_output=True, key="voice_recognition")
+        if voice_input is not None:
+            st.session_state.listen_mode = False
+
+    # テキスト入力
+    text_input = st.chat_input(f"{name}に話しかける...")
+
+    # 音声 or テキストから user_input を決定
+    user_input = None
+    if voice_input and isinstance(voice_input, str) and voice_input.strip():
+        user_input = voice_input.strip()
+        st.toast(f"🎤 {user_input}")
+    elif text_input:
+        user_input = text_input
+
     if user_input:
         st.session_state.messages.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
