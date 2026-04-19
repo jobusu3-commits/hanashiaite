@@ -25,7 +25,7 @@ if st.session_state.config is None:
         relationship = st.selectbox("関係性", ["友人", "幼なじみ", "先輩", "後輩", "恋人", "メンター"])
         tone = st.selectbox("口調", ["タメ口・フレンドリー", "丁寧語・落ち着いた", "関西弁", "元気・テンション高め", "クール・寡黙"])
         personality = st.text_area("性格・特徴（自由に）", placeholder="例：聞き上手で穏やか。たまに毒舌だけど根は優しい。", height=80)
-        topics = st.text_area("よく話す話題・共通の趣味", placeholder="例：競馬、株、音楽、日常のグチ", height=80)
+        topics = st.text_area("よく話す話題・共通の趣味", placeholder="例：仕事のグチ、恋愛相談、映画、音楽、日常のできごと", height=80)
         submitted = st.form_submit_button("話し相手をつくる", use_container_width=True, type="primary")
 
     if submitted:
