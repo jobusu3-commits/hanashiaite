@@ -2,14 +2,20 @@ import os
 import anthropic
 import streamlit as st
 from streamlit_js_eval import streamlit_js_eval
+from datetime import date
 from character import build_system_prompt
-from storage import save_config, load_config, save_history, load_history, clear_history
+from storage import (
+    save_config, load_config,
+    save_history, load_history, clear_history,
+    save_diary, load_diaries,
+    get_greeted_date, set_greeted_date,
+)
+from diary import get_today_opening, build_diary_prompt
 
 st.set_page_config(page_title="話し相手", page_icon="💬", layout="centered")
 
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
-# --- キャラ設定読み込み ---
 if "config" not in st.session_state:
     st.session_state.config = load_config()
 if "messages" not in st.session_state:
@@ -45,87 +51,127 @@ if st.session_state.config is None:
             st.session_state.config = config
             st.rerun()
 
-# --- チャット画面 ---
+# --- メイン画面 ---
 else:
     config = st.session_state.config
     name = config["name"]
+    today_str = date.today().isoformat()
 
-    col1, col2 = st.columns([4, 1])
-    col1.title(f"💬 {name}")
-    if col2.button("設定をリセット", use_container_width=True):
-        st.session_state.config = None
-        st.session_state.messages = []
-        clear_history()
-        if os.path.exists("character_config.json"):
-            os.remove("character_config.json")
-        st.rerun()
+    tab_chat, tab_diary = st.tabs(["💬 話す", "📔 日記"])
 
-    # 履歴表示
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.write(msg["content"])
-
-    # 音声入力状態管理
-    if "listen_mode" not in st.session_state:
-        st.session_state.listen_mode = False
-
-    if st.button("🎤 話す", disabled=st.session_state.listen_mode):
-        st.session_state.listen_mode = True
-        st.rerun()
-
-    # 音声認識実行
-    voice_input = None
-    if st.session_state.listen_mode:
-        st.info("🎤 聞いています…　話し終わったら少し待ってください")
-        voice_input = streamlit_js_eval(js_expressions="""
-            new Promise((resolve) => {
-                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                if (!SpeechRecognition) { resolve(''); return; }
-                const recognition = new SpeechRecognition();
-                recognition.lang = 'ja-JP';
-                recognition.interimResults = false;
-                recognition.maxAlternatives = 1;
-                recognition.onresult = (e) => resolve(e.results[0][0].transcript);
-                recognition.onerror = () => resolve('');
-                recognition.start();
-            })
-        """, want_output=True, key="voice_recognition")
-        if voice_input is not None:
-            st.session_state.listen_mode = False
-
-    # テキスト入力
-    text_input = st.chat_input(f"{name}に話しかける...")
-
-    # 音声 or テキストから user_input を決定
-    user_input = None
-    if voice_input and isinstance(voice_input, str) and voice_input.strip():
-        user_input = voice_input.strip()
-        st.toast(f"🎤 {user_input}")
-    elif text_input:
-        user_input = text_input
-
-    if user_input:
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.write(user_input)
-
-        system_prompt = build_system_prompt(config)
-        with st.chat_message("assistant"):
-            with st.spinner(""):
-                response = client.messages.create(
-                    model="claude-haiku-4-5-20251001",
-                    max_tokens=512,
-                    system=system_prompt,
-                    messages=st.session_state.messages,
-                )
-                reply = response.content[0].text
-                st.write(reply)
-
-        st.session_state.messages.append({"role": "assistant", "content": reply})
-        save_history(st.session_state.messages)
-
-    if st.session_state.messages:
-        if st.button("会話をリセット", use_container_width=True):
+    # ==============================
+    # タブ①：チャット
+    # ==============================
+    with tab_chat:
+        col1, col2 = st.columns([4, 1])
+        col1.title(f"💬 {name}")
+        if col2.button("設定をリセット", use_container_width=True):
+            st.session_state.config = None
             st.session_state.messages = []
             clear_history()
+            if os.path.exists("character_config.json"):
+                os.remove("character_config.json")
             st.rerun()
+
+        # 今日の挨拶（日付が変わったら or 初回）
+        if get_greeted_date() != today_str:
+            opening = get_today_opening(config)
+            st.session_state.messages.append({"role": "assistant", "content": opening})
+            save_history(st.session_state.messages)
+            set_greeted_date(today_str)
+
+        # 履歴表示
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.write(msg["content"])
+
+        # 音声入力
+        if "listen_mode" not in st.session_state:
+            st.session_state.listen_mode = False
+
+        if st.button("🎤 話す", disabled=st.session_state.listen_mode):
+            st.session_state.listen_mode = True
+            st.rerun()
+
+        voice_input = None
+        if st.session_state.listen_mode:
+            st.info("🎤 聞いています…　話し終わったら少し待ってください")
+            voice_input = streamlit_js_eval(js_expressions="""
+                new Promise((resolve) => {
+                    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    if (!SpeechRecognition) { resolve(''); return; }
+                    const recognition = new SpeechRecognition();
+                    recognition.lang = 'ja-JP';
+                    recognition.interimResults = false;
+                    recognition.maxAlternatives = 1;
+                    recognition.onresult = (e) => resolve(e.results[0][0].transcript);
+                    recognition.onerror = () => resolve('');
+                    recognition.start();
+                })
+            """, want_output=True, key="voice_recognition")
+            if voice_input is not None:
+                st.session_state.listen_mode = False
+
+        text_input = st.chat_input(f"{name}に話しかける...")
+
+        user_input = None
+        if voice_input and isinstance(voice_input, str) and voice_input.strip():
+            user_input = voice_input.strip()
+            st.toast(f"🎤 {user_input}")
+        elif text_input:
+            user_input = text_input
+
+        if user_input:
+            st.session_state.messages.append({"role": "user", "content": user_input})
+            with st.chat_message("user"):
+                st.write(user_input)
+
+            system_prompt = build_system_prompt(config)
+            with st.chat_message("assistant"):
+                with st.spinner(""):
+                    response = client.messages.create(
+                        model="claude-haiku-4-5-20251001",
+                        max_tokens=512,
+                        system=system_prompt,
+                        messages=st.session_state.messages,
+                    )
+                    reply = response.content[0].text
+                    st.write(reply)
+
+            st.session_state.messages.append({"role": "assistant", "content": reply})
+            save_history(st.session_state.messages)
+
+        # 下部ボタン
+        if st.session_state.messages:
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("📔 今日の日記をつくる", use_container_width=True, type="primary"):
+                    with st.spinner("日記を書いています…"):
+                        prompt = build_diary_prompt(st.session_state.messages, config)
+                        res = client.messages.create(
+                            model="claude-haiku-4-5-20251001",
+                            max_tokens=512,
+                            messages=[{"role": "user", "content": prompt}],
+                        )
+                        diary_text = res.content[0].text
+                        save_diary(today_str, diary_text)
+                    st.success("日記をつけました！「📔 日記」タブで読めます。")
+            with col_b:
+                if st.button("会話をリセット", use_container_width=True):
+                    st.session_state.messages = []
+                    clear_history()
+                    st.rerun()
+
+    # ==============================
+    # タブ②：日記一覧
+    # ==============================
+    with tab_diary:
+        st.title("📔 日記")
+        diaries = load_diaries()
+
+        if not diaries:
+            st.caption("まだ日記がありません。話した後に「今日の日記をつくる」を押してください。")
+        else:
+            for d in sorted(diaries.keys(), reverse=True):
+                with st.expander(d, expanded=(d == today_str)):
+                    st.markdown(diaries[d])
