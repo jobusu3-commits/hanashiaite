@@ -3,7 +3,7 @@ import anthropic
 import streamlit as st
 from streamlit_js_eval import streamlit_js_eval
 from datetime import date
-from character import build_system_prompt
+from character import build_system_prompt, research_character
 from storage import (
     save_config, load_config,
     save_history, load_history, clear_history,
@@ -29,9 +29,14 @@ if st.session_state.config is None:
     with st.form("setup"):
         user_name = st.text_input("あなたの名前（呼ばれたい名前）", placeholder="例：たかし、ゆい、けん")
         name = st.text_input("話し相手の名前", placeholder="例：ハル、リク、あやね")
+        character_ref = st.text_input(
+            "元にするキャラクター（任意）",
+            placeholder="例：進撃の巨人のリヴァイ、ハイキューの影山、スパイファミリーのアーニャ"
+        )
+        st.caption("入力するとそのキャラクターの口調・性格を自動で反映します。空欄でも使えます。")
         relationship = st.selectbox("関係性", ["友人", "幼なじみ", "先輩", "後輩", "恋人", "メンター"])
-        tone = st.selectbox("口調", ["タメ口・フレンドリー", "丁寧語・落ち着いた", "関西弁", "元気・テンション高め", "クール・寡黙"])
-        personality = st.text_area("性格・特徴（自由に）", placeholder="例：聞き上手で穏やか。たまに毒舌だけど根は優しい。", height=80)
+        tone = st.selectbox("口調（キャラクター指定がない場合に使用）", ["タメ口・フレンドリー", "丁寧語・落ち着いた", "関西弁", "元気・テンション高め", "クール・寡黙"])
+        personality = st.text_area("性格・補足（自由に）", placeholder="例：聞き上手で穏やか。たまに毒舌だけど根は優しい。", height=80)
         topics = st.text_area("よく話す話題・共通の趣味", placeholder="例：仕事のグチ、恋愛相談、映画、音楽、日常のできごと", height=80)
         submitted = st.form_submit_button("話し相手をつくる", use_container_width=True, type="primary")
 
@@ -39,6 +44,15 @@ if st.session_state.config is None:
         if not name or not user_name:
             st.warning("名前を入力してください。")
         else:
+            character_profile = ""
+            if character_ref.strip():
+                with st.spinner(f"「{character_ref}」を調べています…"):
+                    character_profile = research_character(character_ref.strip(), client)
+                if character_profile:
+                    st.success(f"「{character_ref}」の情報を取得しました。")
+                else:
+                    st.warning("キャラクター情報が見つかりませんでした。通常モードで作成します。")
+
             config = {
                 "user_name": user_name,
                 "name": name,
@@ -46,6 +60,8 @@ if st.session_state.config is None:
                 "tone": tone,
                 "personality": personality,
                 "topics": topics,
+                "character_ref": character_ref,
+                "character_profile": character_profile,
             }
             save_config(config)
             st.session_state.config = config
